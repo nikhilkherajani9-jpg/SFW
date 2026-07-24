@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SFW Mobile</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="app-header">
+            <h1>SFW Mobile</h1>
+            <button id="syncBtn" class="sync-btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+                Sync
+            </button>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="app-main">
+            <!-- Sync Setup Modal -->
+            <div id="syncModal" class="modal hidden">
+                <div class="modal-content">
+                    <h2>Connect & Sync</h2>
+                    <p>Enter the PIN from the desktop QR screen to download fresh data.</p>
+                    <input type="text" id="pinInput" placeholder="Enter PIN (e.g. 1234)">
+                    <div class="modal-actions">
+                        <button id="cancelSyncBtn" class="btn-secondary">Cancel</button>
+                        <button id="startSyncBtn" class="btn-primary">Start Sync</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Loader -->
+            <div id="loader" class="loader-container hidden">
+                <div class="spinner"></div>
+                <p id="loaderText">Syncing data...</p>
+            </div>
+
+            <!-- Stock Tab -->
+            <div id="tab-stock" class="tab-content active">
+                <div class="search-bar">
+                    <input type="text" id="stockSearch" placeholder="Search stock (name, location)...">
+                </div>
+                <div id="stockList" class="item-list">
+                    <!-- Stock items injected here via JS -->
+                </div>
+            </div>
+
+            <!-- LRs Tab -->
+            <div id="tab-lrs" class="tab-content hidden">
+                <div class="search-bar">
+                    <input type="text" id="lrSearch" placeholder="Search LRs (number, transport)...">
+                </div>
+                <div id="lrList" class="item-list">
+                    <!-- LR items injected here -->
+                </div>
+            </div>
+
+            <!-- Creditors Tab -->
+            <div id="tab-creditors" class="tab-content hidden">
+                <div class="search-bar">
+                    <input type="text" id="creditorSearch" placeholder="Search creditors...">
+                </div>
+                <div id="creditorList" class="item-list">
+                    <!-- Creditor items injected here -->
+                </div>
+            </div>
+        </main>
+
+        <!-- Bottom Navigation -->
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-target="tab-stock">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                <span>Stock</span>
+            </button>
+            <button class="nav-item" data-target="tab-lrs">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                <span>LRs</span>
+            </button>
+            <button class="nav-item" data-target="tab-creditors">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                <span>Creditors</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- PWA Service Worker Registration & App Logic -->
+    <script src="app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js').catch(err => console.error('SW registration failed:', err));
+            });
+        }
+    </script>
+</body>
+</html>

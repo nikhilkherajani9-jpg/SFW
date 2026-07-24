@@ -1,0 +1,23 @@
+# Ignore archives
+*.rar
+*.zip
+*.7z
+
+# Ignore business data
+STOCK NEW/
+Zero_Balance_Files.csv
+
+# Java Maven
+**/target/
+*.class
+*.log
+
+# Database
+*.db
+
+# VS Code
+.vscode/
+
+# Flutter
+**/.dart_tool/
+**/build/

@@ -28,7 +28,15 @@ Located in the `sfw_mobile/` directory, this is the mobile companion application
 ## Getting Started
 
 ### Desktop Application
-To build and run the desktop application, navigate to the `footwear-wholesale/` directory. You will need Java 21 and Maven installed.
+To build and run the desktop application, navigate to the `footwear-wholesale/` directory. You can use the provided `run.bat` script or run it manually using Maven.
+
+**Using the batch script (Windows):**
+```bash
+cd footwear-wholesale
+run.bat
+```
+
+**Using Maven:**
 ```bash
 cd footwear-wholesale
 mvn clean javafx:run

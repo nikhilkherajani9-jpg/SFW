@@ -48,7 +48,7 @@ if exist target\runtime rmdir /s /q target\runtime
 
 "%JLINK%" ^
   --module-path "%JAVAFX_MODS%" ^
-  --add-modules java.base,java.sql,java.logging,java.desktop,java.naming,jdk.httpserver,javafx.controls,javafx.graphics ^
+  --add-modules java.base,java.sql,java.logging,java.desktop,java.naming,java.net.http,jdk.httpserver,javafx.controls,javafx.graphics ^
   --output target\runtime ^
   --strip-debug ^
   --no-man-pages ^

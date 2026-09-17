@@ -7,12 +7,18 @@ This project is a comprehensive wholesale management solution tailored for the f
 The repository is divided into the following main components:
 
 ### 1. Footwear Wholesale (Desktop Application)
-Located in the `footwear-wholesale/` directory, this is the core desktop application used for robust administration and inventory management.
+Located in the `footwear-wholesale/` directory, this is a high-performance, offline-first desktop application engineered for managing footwear wholesale operations directly from USB Hard Disk Drives (HDDs).
+
+**Key Features (Desktop):**
+* **Advanced License Management:** Hardware-bound product keys with a **4-day offline grace period**, cryptographically secured. Realtime revocation via Firebase.
+* **Wholesale Operations:** Manage stock ledgers, bulk Lorry Receipts (LR), and Godown (GD) transfers.
+* **HDD Performance:** Optimized SQLite WAL mode, in-memory temp tables, and heavy multithreading decoupled from the UI thread to prevent freezing on mechanical drives.
 
 **Key Technologies:**
 - Java 21
-- JavaFX (Desktop UI framework)
+- JavaFX 21.0.4 (Desktop UI framework)
 - SQLite (Database)
+- Firebase Realtime Database (Licensing Backend)
 - Maven (Build tool)
 - ZXing (Barcode/QR code generation)
 

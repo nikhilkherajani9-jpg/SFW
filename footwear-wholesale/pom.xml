@@ -135,7 +135,7 @@
                     <outputDirectory>${project.build.directory}/libs</outputDirectory>
                     <archive>
                         <manifest>
-                            <mainClass>com.sfw.wholesale.App</mainClass>
+                            <mainClass>com.sfw.wholesale.Main</mainClass>
                             <addClasspath>true</addClasspath>
                             <classpathPrefix>./</classpathPrefix>
                         </manifest>

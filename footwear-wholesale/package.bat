@@ -1,14 +1,7 @@
 @echo off
 REM ============================================================
 REM  package.bat — Creates a self-contained Windows app bundle
-REM  using jlink + jpackage.
-REM
-REM  Requirements:
-REM    - BellSoft Liberica JDK 21 Full (includes JavaFX jmods)
-REM      Download: https://bell-sw.com/pages/downloads/#jdk-21-lts
-REM      Install to: C:\Program Files\BellSoft\LibericaJDK-21-Full\
-REM      OR set JAVA_HOME below to your installation path.
-REM    - Maven 3.9+ on PATH
+REM  using jpackage (with your current Eclipse Temurin JDK).
 REM
 REM  Output: target\SFW-Wholesale\  (copy this entire folder to USB HDD)
 REM ============================================================
@@ -16,12 +9,21 @@ REM ============================================================
 setlocal
 
 REM ── Configure paths ────────────────────────────────────────────────
-REM If you installed Liberica JDK to a different path, change this:
-set JAVA_HOME=C:\Program Files\BellSoft\LibericaJDK-21-Full
+REM By default, we use the Java currently on your PATH.
+REM If it fails, uncomment and set JAVA_HOME to your Eclipse Temurin path:
+REM set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.12.8-hotspot
 
-set JPACKAGE=%JAVA_HOME%\bin\jpackage.exe
-set JLINK=%JAVA_HOME%\bin\jlink.exe
-set JAVAFX_MODS=%JAVA_HOME%\jmods
+where jpackage >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    set JPACKAGE=jpackage
+) else (
+    if defined JAVA_HOME (
+        set JPACKAGE="%JAVA_HOME%\bin\jpackage.exe"
+    ) else (
+        echo ERROR: jpackage not found on PATH. Please set JAVA_HOME.
+        pause & exit /b 1
+    )
+)
 
 REM ── Step 1: Build the project and collect JARs ─────────────────────
 REM Fallback to the Maven downloaded earlier if mvn is not in PATH
@@ -33,7 +35,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
-echo [1/4] Building project with Maven (skipping tests)...
+echo [1/3] Building project with Maven (skipping tests)...
 call mvn -DskipTests clean package -q
 if %ERRORLEVEL% neq 0 (
     echo ERROR: Maven build failed. Check the output above.
@@ -41,37 +43,16 @@ if %ERRORLEVEL% neq 0 (
 )
 echo     Done.
 
-REM ── Step 2: Create custom JRE with jlink ──────────────────────────
+REM ── Step 2: Package with jpackage ─────────────────────────────────
 echo.
-echo [2/4] Creating custom JRE with jlink...
-if exist target\runtime rmdir /s /q target\runtime
-
-"%JLINK%" ^
-  --module-path "%JAVAFX_MODS%" ^
-  --add-modules java.base,java.sql,java.logging,java.desktop,java.naming,java.net.http,jdk.httpserver,javafx.controls,javafx.graphics ^
-  --output target\runtime ^
-  --strip-debug ^
-  --no-man-pages ^
-  --no-header-files ^
-  --compress=2
-
-if %ERRORLEVEL% neq 0 (
-    echo ERROR: jlink failed. Make sure JAVA_HOME points to Liberica JDK Full.
-    pause & exit /b 1
-)
-echo     Done.
-
-REM ── Step 3: Package with jpackage ─────────────────────────────────
-echo.
-echo [3/4] Packaging with jpackage (app-image)...
+echo [2/3] Packaging with jpackage (app-image)...
 if exist target\SFW-Wholesale rmdir /s /q target\SFW-Wholesale
 
-"%JPACKAGE%" ^
+%JPACKAGE% ^
   --type app-image ^
   --input target\libs ^
   --main-jar footwear-wholesale-1.0.0.jar ^
-  --main-class com.sfw.wholesale.App ^
-  --runtime-image target\runtime ^
+  --main-class com.sfw.wholesale.Main ^
   --name "SFW-Wholesale" ^
   --app-version 1.0.0 ^
   --icon src\main\resources\icons\sfw-logo.ico ^
@@ -85,9 +66,9 @@ if %ERRORLEVEL% neq 0 (
 )
 echo     Done.
 
-REM ── Step 4: Summary ───────────────────────────────────────────────
+REM ── Step 3: Summary ───────────────────────────────────────────────
 echo.
-echo [4/4] Complete!
+echo [3/3] Complete!
 echo.
 echo Self-contained app bundle created at:
 echo   %CD%\target\SFW-Wholesale\

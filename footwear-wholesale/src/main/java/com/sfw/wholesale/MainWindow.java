@@ -15,6 +15,7 @@ import java.io.File;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.logging.Logger;
+import javafx.concurrent.Task;
 
 /**
  * Main application window.
@@ -166,24 +167,34 @@ public class MainWindow {
 
     // ── Export / Import handlers ──────────────────────────────────────────────
 
+    // BUG-01 FIX: export runs on a daemon background thread — FXAT never blocked
     private void handleExport() {
         DirectoryChooser chooser = new DirectoryChooser();
         chooser.setTitle("Select folder to save backup CSV files");
         File dir = chooser.showDialog(stage);
         if (dir == null) return;
 
-        try {
-            Path folder = expImp.export(dir.toPath());
-            ConfirmDialog.showInfo("Export Complete",
-                    "Backup saved to:\n" + folder.toAbsolutePath() + "\n\n" +
-                    "This folder contains 5 CSV files — share with your accountant or\n" +
-                    "use it to restore data if the database is ever corrupted.");
-        } catch (Exception ex) {
-            ConfirmDialog.showError("Export Failed", "Could not export data:\n" + ex.getMessage());
-            LOG.severe("Export error: " + ex.getMessage());
-        }
+        Task<Path> task = new Task<>() {
+            @Override
+            protected Path call() throws Exception {
+                return expImp.export(dir.toPath());
+            }
+        };
+        task.setOnSucceeded(e -> ConfirmDialog.showInfo("Export Complete",
+                "Backup saved to:\n" + task.getValue().toAbsolutePath() +
+                "\n\nThis folder contains CSV files — share with your accountant or\n" +
+                "use it to restore data if the database is ever corrupted."));
+        task.setOnFailed(e -> {
+            ConfirmDialog.showError("Export Failed", "Could not export data:\n" +
+                    task.getException().getMessage());
+            LOG.severe("Export error: " + task.getException().getMessage());
+        });
+        Thread t = new Thread(task, "export-thread");
+        t.setDaemon(true);
+        t.start();
     }
 
+    // BUG-02 FIX: import runs on a daemon background thread — FXAT never blocked
     private void handleImport() {
         boolean confirmed = ConfirmDialog.show(
                 "Import / Restore",
@@ -198,15 +209,23 @@ public class MainWindow {
         File dir = chooser.showDialog(stage);
         if (dir == null) return;
 
-        try {
-            expImp.importFromFolder(dir.toPath());
-            ConfirmDialog.showInfo("Import Complete",
-                    "Data restored successfully from:\n" + dir.getAbsolutePath());
-        } catch (Exception ex) {
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                expImp.importFromFolder(dir.toPath());
+                return null;
+            }
+        };
+        task.setOnSucceeded(e -> ConfirmDialog.showInfo("Import Complete",
+                "Data restored successfully from:\n" + dir.getAbsolutePath()));
+        task.setOnFailed(e -> {
             ConfirmDialog.showError("Import Failed",
-                    "Could not restore data:\n" + ex.getMessage() +
+                    "Could not restore data:\n" + task.getException().getMessage() +
                     "\n\nYour existing data has NOT been modified (import was aborted).");
-            LOG.severe("Import error: " + ex.getMessage());
-        }
+            LOG.severe("Import error: " + task.getException().getMessage());
+        });
+        Thread t = new Thread(task, "import-thread");
+        t.setDaemon(true);
+        t.start();
     }
 }

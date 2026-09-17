@@ -650,7 +650,8 @@ public class LrEntryTab extends VBox implements TabShortcutHandler {
                                 ev.consume();
                                 String text = textField.getText().trim().toUpperCase();
                                 if (isWarehouse(text)) {
-                                    commitEdit(text);
+                                    // BUG-14: normalise to canonical case before commit
+                                    commitEdit(normalizeLocation(text));
                                     javafx.application.Platform.runLater(() -> {
                                         itemTable.getSelectionModel().select(getIndex(), colLocation);
                                         itemTable.getFocusModel().focus(getIndex(), colLocation);
@@ -678,7 +679,8 @@ public class LrEntryTab extends VBox implements TabShortcutHandler {
             private void commitIfValid() {
                 String text = textField.getText().trim().toUpperCase();
                 if (isWarehouse(text)) {
-                    commitEdit(text);
+                    // BUG-14: normalise to canonical case before commit
+                    commitEdit(normalizeLocation(text));
                 } else {
                     cancelEdit();
                 }
@@ -751,6 +753,12 @@ public class LrEntryTab extends VBox implements TabShortcutHandler {
     private boolean isWarehouse(String loc) {
         return loc != null && (loc.equals("G1") || loc.equals("G2") || loc.equals("G3")
                 || loc.equals("G4") || loc.equals("G5") || loc.equals("RK2") || loc.equals("SHOP"));
+    }
+
+    /** Maps the upper-cased location token to its canonical stored form. */
+    private String normalizeLocation(String upperLoc) {
+        if ("SHOP".equals(upperLoc)) return "Shop";
+        return upperLoc; // G1-G5, RK2 are already canonical
     }
 
     private void moveToNextCell() {

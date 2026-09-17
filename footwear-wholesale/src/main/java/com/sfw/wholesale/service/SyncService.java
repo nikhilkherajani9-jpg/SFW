@@ -43,13 +43,15 @@ public class SyncService {
 
     private static final Logger LOG         = Logger.getLogger(SyncService.class.getName());
     private static final int    SERVER_PORT = 8742;
+    // BUG-10: cryptographically strong RNG for the pairing PIN
+    private static final java.security.SecureRandom SECURE_RNG = new java.security.SecureRandom();
 
     private static final byte[] AES_KEY = "SfwMobileAppSyncDataKey123456789".getBytes(StandardCharsets.UTF_8);
     private static final byte[] AES_IV  = "SfwMobileAppIV12".getBytes(StandardCharsets.UTF_8);
 
     private HttpServer server;
-    private String     currentToken;
-    private boolean    tokenUsed;
+    private volatile String  currentToken;   // BUG-13: volatile for cross-thread visibility
+    private volatile boolean tokenUsed;      // BUG-13: volatile for cross-thread visibility
     private String     boundIp;
 
     private final DataCache cache = DataCache.getInstance();
@@ -72,7 +74,8 @@ public class SyncService {
         stop(); // ensure clean state
 
         this.boundIp = selectedIp;
-        this.currentToken = String.format("%04d", new java.util.Random().nextInt(10000));
+        // BUG-10: use SecureRandom for the pairing PIN (6 digits, 1M possibilities)
+        this.currentToken = String.format("%06d", SECURE_RNG.nextInt(1_000_000));
         this.tokenUsed = false;
         this.syncStock = syncStock;
         this.syncLrs = syncLrs;
@@ -298,7 +301,9 @@ public class SyncService {
             String sql = "SELECT i.line_no, i.product_name, i.cartons, i.shop_cartons, i.pairs_per_carton, i.location, e.lr_number " +
                          "FROM lr_items i JOIN lr_entries e ON i.lr_id = e.id " +
                          "WHERE e.lr_number != 'MANUAL-ADJ'";
-            try (java.sql.Statement st = DatabaseManager.getInstance().getConnection().createStatement();
+            // BUG-06: use a dedicated read connection — never share the FXAT's write connection
+            try (java.sql.Connection conn = DatabaseManager.getInstance().openReadConnection();
+                 java.sql.Statement st = conn.createStatement();
                  java.sql.ResultSet rs = st.executeQuery(sql)) {
                 boolean first = true;
                 while (rs.next()) {
@@ -324,11 +329,13 @@ public class SyncService {
         // Stock Ledger
         sb.append("\"stock_ledger\":[");
         if (syncStock) {
-            try {
-                 java.sql.Connection conn = DatabaseManager.getInstance().getConnection();
+            // BUG-05+06: dedicated read connection + try-with-resources (both Statement and RS always closed)
+            try (java.sql.Connection conn = DatabaseManager.getInstance().openReadConnection();
                  java.sql.Statement st = conn.createStatement();
-                 java.sql.ResultSet rs = st.executeQuery("SELECT product_name, location, transaction_date, inward_cartons, outward_cartons, balance_cartons, pairs_per_carton, lr_source, transaction_type FROM stock_ledger ORDER BY id ASC");
-                 
+                 java.sql.ResultSet rs = st.executeQuery(
+                     "SELECT product_name, location, transaction_date, inward_cartons, outward_cartons," +
+                     " balance_cartons, pairs_per_carton, lr_source, transaction_type" +
+                     " FROM stock_ledger ORDER BY id ASC")) {
                 boolean first = true;
                 while (rs.next()) {
                     if (!first) sb.append(',');
@@ -345,8 +352,6 @@ public class SyncService {
                       .append("\"type\":").append(jsonStr(rs.getString("transaction_type")))
                       .append("}");
                 }
-                rs.close();
-                st.close();
             } catch (Exception e) {
                 LOG.warning("Failed to append stock_ledger to sync payload: " + e.getMessage());
             }

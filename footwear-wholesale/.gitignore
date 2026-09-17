@@ -1,0 +1,10 @@
+target/
+*.db
+*.db-shm
+*.db-wal
+*.dat
+.idea/
+*.iml
+.vscode/
+*.class
+*.log

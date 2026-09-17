@@ -74,6 +74,24 @@ public class DatabaseManager {
     }
 
     /**
+     * Opens a fresh, dedicated read-only connection for background threads.
+     * Caller is responsible for closing it (use try-with-resources).
+     *
+     * BUG-06 FIX: Background operations (sync server, export, ledger viewer) each
+     * open their own connection via this method so they never share the write
+     * connection used by the JavaFX Application Thread.
+     */
+    public Connection openReadConnection() throws SQLException {
+        String path = resolveDbPath();
+        Connection conn = DriverManager.getConnection("jdbc:sqlite:" + path);
+        try (Statement st = conn.createStatement()) {
+            st.execute("PRAGMA journal_mode=WAL;");
+            st.execute("PRAGMA query_only=ON;");
+        }
+        return conn;
+    }
+
+    /**
      * Closes the connection cleanly. Called on application exit.
      * Optionally runs VACUUM at this point (HDD-friendly: only on close).
      */
@@ -99,7 +117,7 @@ public class DatabaseManager {
      * Resolves the DB path to the directory containing the running JAR/exe.
      * Falls back to the current working directory if that cannot be determined.
      */
-    private String resolveDbPath() {
+    public static String resolveDbPath() {
         try {
             File jarFile = new File(
                     DatabaseManager.class.getProtectionDomain()
@@ -246,24 +264,24 @@ public class DatabaseManager {
 
     private void migrateStockTableLocationCheck() throws SQLException {
         try (Statement st = connection.createStatement()) {
-            // Check if the current stock table has the CHECK constraint on location.
-            // SQLite pragma table_info doesn't show CHECK constraints easily, but we can look at sqlite_master.
-            ResultSet rs = st.executeQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name='stock'");
-            if (rs.next()) {
-                String sql = rs.getString("sql");
-                if (sql != null && sql.contains("CHECK(location IN")) {
-                    LOG.info("Migrating stock table to remove location CHECK constraint...");
-                    st.execute("PRAGMA foreign_keys=OFF;");
-                    st.execute("BEGIN TRANSACTION;");
-                    st.execute("CREATE TABLE stock_new (id INTEGER PRIMARY KEY AUTOINCREMENT, product_name TEXT NOT NULL, location TEXT NOT NULL, cartons INTEGER NOT NULL DEFAULT 0, pairs_per_carton INTEGER NOT NULL DEFAULT 1, lr_source TEXT, receive_date TEXT NOT NULL DEFAULT (date('now')));");
-                    st.execute("INSERT INTO stock_new SELECT id, product_name, location, cartons, pairs_per_carton, lr_source, receive_date FROM stock;");
-                    st.execute("DROP TABLE stock;");
-                    st.execute("ALTER TABLE stock_new RENAME TO stock;");
-                    st.execute("CREATE INDEX idx_stock_product ON stock(product_name);");
-                    st.execute("CREATE INDEX idx_stock_location ON stock(location);");
-                    st.execute("COMMIT;");
-                    st.execute("PRAGMA foreign_keys=ON;");
-                    LOG.info("Stock table migration complete.");
+            // BUG-12: wrap ResultSet in try-with-resources
+            try (ResultSet rs = st.executeQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name='stock'")) {
+                if (rs.next()) {
+                    String sql = rs.getString("sql");
+                    if (sql != null && sql.contains("CHECK(location IN")) {
+                        LOG.info("Migrating stock table to remove location CHECK constraint...");
+                        st.execute("PRAGMA foreign_keys=OFF;");
+                        st.execute("BEGIN TRANSACTION;");
+                        st.execute("CREATE TABLE stock_new (id INTEGER PRIMARY KEY AUTOINCREMENT, product_name TEXT NOT NULL, location TEXT NOT NULL, cartons INTEGER NOT NULL DEFAULT 0, pairs_per_carton INTEGER NOT NULL DEFAULT 1, lr_source TEXT, receive_date TEXT NOT NULL DEFAULT (date('now')));");
+                        st.execute("INSERT INTO stock_new SELECT id, product_name, location, cartons, pairs_per_carton, lr_source, receive_date FROM stock;");
+                        st.execute("DROP TABLE stock;");
+                        st.execute("ALTER TABLE stock_new RENAME TO stock;");
+                        st.execute("CREATE INDEX idx_stock_product ON stock(product_name);");
+                        st.execute("CREATE INDEX idx_stock_location ON stock(location);");
+                        st.execute("COMMIT;");
+                        st.execute("PRAGMA foreign_keys=ON;");
+                        LOG.info("Stock table migration complete.");
+                    }
                 }
             }
         }
@@ -295,30 +313,34 @@ public class DatabaseManager {
 
     private void migrateLrItemsShopCartons() throws SQLException {
         try (Statement st = connection.createStatement()) {
-            ResultSet rs = st.executeQuery("PRAGMA table_info(lr_items)");
-            boolean hasShopCartons = false;
-            while (rs.next()) {
-                if ("shop_cartons".equals(rs.getString("name"))) {
-                    hasShopCartons = true;
-                    break;
+            // BUG-12: wrap ResultSet in try-with-resources
+            try (ResultSet rs = st.executeQuery("PRAGMA table_info(lr_items)")) {
+                boolean hasShopCartons = false;
+                while (rs.next()) {
+                    if ("shop_cartons".equals(rs.getString("name"))) {
+                        hasShopCartons = true;
+                        break;
+                    }
                 }
-            }
-            if (!hasShopCartons) {
-                LOG.info("Migrating lr_items: adding shop_cartons column.");
-                st.execute("ALTER TABLE lr_items ADD COLUMN shop_cartons INTEGER NOT NULL DEFAULT 0");
+                if (!hasShopCartons) {
+                    LOG.info("Migrating lr_items: adding shop_cartons column.");
+                    st.execute("ALTER TABLE lr_items ADD COLUMN shop_cartons INTEGER NOT NULL DEFAULT 0");
+                }
             }
         }
     }
 
     private void migrateLrItemsDropRateAmount() throws SQLException {
         try (Statement st = connection.createStatement()) {
-            ResultSet rs = st.executeQuery("PRAGMA table_info(lr_items)");
+            // BUG-12: wrap ResultSet in try-with-resources
             boolean hasRate = false;
             boolean hasAmount = false;
-            while (rs.next()) {
-                String name = rs.getString("name");
-                if ("rate_per_pair".equals(name)) hasRate = true;
-                if ("amount".equals(name)) hasAmount = true;
+            try (ResultSet rs = st.executeQuery("PRAGMA table_info(lr_items)")) {
+                while (rs.next()) {
+                    String name = rs.getString("name");
+                    if ("rate_per_pair".equals(name)) hasRate = true;
+                    if ("amount".equals(name)) hasAmount = true;
+                }
             }
             if (hasRate || hasAmount) {
                 LOG.info("Migrating lr_items: removing rate_per_pair and amount columns.");
@@ -339,12 +361,14 @@ public class DatabaseManager {
 
     private void migrateLrEntriesDropCreditorColumns() throws SQLException {
         try (Statement st = connection.createStatement()) {
-            ResultSet rs = st.executeQuery("PRAGMA table_info(lr_entries)");
+            // BUG-12: wrap ResultSet in try-with-resources
             boolean hasSupplierName = false;
-            while (rs.next()) {
-                if ("supplier_name".equals(rs.getString("name"))) {
-                    hasSupplierName = true;
-                    break;
+            try (ResultSet rs = st.executeQuery("PRAGMA table_info(lr_entries)")) {
+                while (rs.next()) {
+                    if ("supplier_name".equals(rs.getString("name"))) {
+                        hasSupplierName = true;
+                        break;
+                    }
                 }
             }
             if (hasSupplierName) {
@@ -357,11 +381,11 @@ public class DatabaseManager {
                 st.execute("ALTER TABLE lr_entries_new RENAME TO lr_entries;");
                 st.execute("CREATE INDEX IF NOT EXISTS idx_lr_entries_lr_number ON lr_entries(lr_number);");
                 st.execute("CREATE INDEX IF NOT EXISTS idx_lr_entries_date ON lr_entries(lr_date);");
-                
+
                 // Drop other tables and indexes related to creditors just in case
                 st.execute("DROP TABLE IF EXISTS suppliers;");
                 st.execute("DROP TABLE IF EXISTS creditors;");
-                
+
                 st.execute("COMMIT;");
                 st.execute("PRAGMA foreign_keys=ON;");
                 LOG.info("lr_entries migration complete.");

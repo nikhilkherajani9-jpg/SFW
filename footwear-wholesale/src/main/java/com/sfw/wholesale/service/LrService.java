@@ -86,18 +86,19 @@ public class LrService {
                 """;
         try (PreparedStatement ps = db.getConnection().prepareStatement(sql)) {
             ps.setInt(1, lrId);
-            ResultSet rs = ps.executeQuery();
-            while (rs.next()) {
-                LrItem item = new LrItem(
-                        rs.getInt("id"),
-                        rs.getInt("lr_id"),
-                        rs.getInt("line_no"),
-                        rs.getString("product_name"),
-                        rs.getInt("cartons"),
-                        rs.getInt("shop_cartons"),
-                        rs.getInt("pairs_per_carton"),
-                        rs.getString("location"));
-                result.add(item);
+            try (ResultSet rs = ps.executeQuery()) {   // BUG-08: explicit RS close
+                while (rs.next()) {
+                    LrItem item = new LrItem(
+                            rs.getInt("id"),
+                            rs.getInt("lr_id"),
+                            rs.getInt("line_no"),
+                            rs.getString("product_name"),
+                            rs.getInt("cartons"),
+                            rs.getInt("shop_cartons"),
+                            rs.getInt("pairs_per_carton"),
+                            rs.getString("location"));
+                    result.add(item);
+                }
             }
         }
         return result;
@@ -111,8 +112,9 @@ public class LrService {
         try (PreparedStatement ps = db.getConnection().prepareStatement(sql)) {
             ps.setString(1, lrNumber);
             ps.setInt(2, excludeId);
-            ResultSet rs = ps.executeQuery();
-            return rs.next() && rs.getInt(1) > 0;
+            try (ResultSet rs = ps.executeQuery()) {   // BUG-08: explicit RS close
+                return rs.next() && rs.getInt(1) > 0;
+            }
         }
     }
 

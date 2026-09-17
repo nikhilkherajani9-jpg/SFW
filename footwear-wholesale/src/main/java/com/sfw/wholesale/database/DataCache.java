@@ -1,6 +1,7 @@
 package com.sfw.wholesale.database;
 
 import com.sfw.wholesale.model.*;
+import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 
@@ -20,6 +21,10 @@ import java.util.logging.Logger;
  *
  * HDD performance rationale: loading 500–5000 rows once at startup is fast
  * (sequential read). All subsequent user interactions are pure in-memory ops.
+ *
+ * BUG-11 FIX: All ObservableList.setAll() mutations are now guarded by runOnFx()
+ * so that calls from background threads (startup loader, future background tasks)
+ * always route through Platform.runLater() while FXAT calls remain synchronous.
  */
 public class DataCache {
 
@@ -61,7 +66,7 @@ public class DataCache {
         loadLrList(conn);
         loadStock(conn);
         loadTransfers(conn);
-        buildProductSuggestions();
+        // buildProductSuggestions is called inside loadStock already
         LOG.info("Cache load complete.");
     }
 
@@ -73,14 +78,11 @@ public class DataCache {
 
     public void refreshStock(Connection conn) throws SQLException {
         loadStock(conn);
-        buildProductSuggestions();
     }
 
     public void refreshTransfers(Connection conn) throws SQLException {
         loadTransfers(conn);
     }
-
-
 
     public void refreshTransports(Connection conn) throws SQLException {
         loadTransports(conn);
@@ -95,18 +97,17 @@ public class DataCache {
                      "SELECT name FROM transport_companies ORDER BY name COLLATE NOCASE")) {
             while (rs.next()) tmp.add(rs.getString("name"));
         }
-        transportNames.setAll(tmp);
+        // BUG-11: always mutate ObservableList on the FXAT
+        runOnFx(() -> transportNames.setAll(tmp));
     }
 
     private void loadLrList(Connection conn) throws SQLException {
         List<LrEntry> tmp = new ArrayList<>();
-        // Aggregate total cartons and total shop cartons per LR from lr_items
+        // BUG-09: removed duplicate total_cartons / total_shop_cartons columns
         String sql = """
             SELECT e.id, e.lr_number, e.lr_date, e.transport_company,
-                   COALESCE(SUM(i.cartons), 0)                                    AS total_cartons,
-                   COALESCE(SUM(i.shop_cartons), 0)                               AS total_shop_cartons,
-                   COALESCE(SUM(i.cartons), 0)                                    AS total_cartons,
-                   COALESCE(SUM(i.shop_cartons), 0)                               AS total_shop_cartons
+                   COALESCE(SUM(i.cartons), 0)       AS total_cartons,
+                   COALESCE(SUM(i.shop_cartons), 0)  AS total_shop_cartons
             FROM lr_entries e
             LEFT JOIN lr_items i ON i.lr_id = e.id
             WHERE e.lr_number != 'MANUAL-ADJ'
@@ -127,7 +128,8 @@ public class DataCache {
                 tmp.add(entry);
             }
         }
-        lrList.setAll(tmp);
+        // BUG-11: always mutate ObservableList on the FXAT
+        runOnFx(() -> lrList.setAll(tmp));
     }
 
     private void loadStock(Connection conn) throws SQLException {
@@ -151,7 +153,13 @@ public class DataCache {
                 ));
             }
         }
-        stockRows.setAll(tmp);
+        // Build suggestions from the freshly loaded list (off FXAT — no ObservableList reads)
+        List<String> suggestions = buildSuggestionsFrom(tmp);
+        // BUG-11: both mutations happen together on the FXAT
+        runOnFx(() -> {
+            stockRows.setAll(tmp);
+            productSuggestions.setAll(suggestions);
+        });
     }
 
     private void loadTransfers(Connection conn) throws SQLException {
@@ -177,17 +185,18 @@ public class DataCache {
                 ));
             }
         }
-        transferList.setAll(tmp);
+        // BUG-11: always mutate ObservableList on the FXAT
+        runOnFx(() -> transferList.setAll(tmp));
     }
 
     /**
-     * Rebuilds the product+size+location suggestion list from the current stockRows.
+     * Builds the product+location suggestion list from a pre-loaded stock list.
+     * Pure computation — no ObservableList access, safe to call from any thread.
      * Only warehouse locations (G1–G5, RK2) are included — Shop is never added.
-     * Called after any stock change.
      */
-    private void buildProductSuggestions() {
+    private List<String> buildSuggestionsFrom(List<StockRow> rows) {
         java.util.Map<String, String> dedupMap = new java.util.LinkedHashMap<>();
-        for (StockRow row : stockRows) {
+        for (StockRow row : rows) {
             String loc = row.getLocation();
             if (loc != null && !loc.equalsIgnoreCase("Shop")) {
                 String name = row.getProductName();
@@ -198,7 +207,22 @@ public class DataCache {
                 }
             }
         }
-        productSuggestions.setAll(new ArrayList<>(dedupMap.values()));
+        return new ArrayList<>(dedupMap.values());
+    }
+
+    // ── Thread-safe FX helper ─────────────────────────────────────────────────
+
+    /**
+     * Runs {@code r} immediately if already on the JavaFX Application Thread,
+     * otherwise posts it via Platform.runLater().
+     * Use for all ObservableList mutations so they are always FXAT-safe.
+     */
+    private static void runOnFx(Runnable r) {
+        if (Platform.isFxApplicationThread()) {
+            r.run();
+        } else {
+            Platform.runLater(r);
+        }
     }
 
     // ── Utility ────────────────────────────────────────────────────────────────

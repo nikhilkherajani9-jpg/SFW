@@ -2,6 +2,9 @@ package com.sfw.wholesale;
 
 import com.sfw.wholesale.database.DataCache;
 import com.sfw.wholesale.database.DatabaseManager;
+import com.sfw.wholesale.license.LicenseClient;
+import com.sfw.wholesale.license.LicenseManager;
+import com.sfw.wholesale.ui.ActivationScreen;
 import com.sfw.wholesale.ui.component.ConfirmDialog;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -14,7 +17,10 @@ import javafx.scene.image.ImageView;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
+import javafx.stage.Window;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -40,7 +46,119 @@ public class App extends Application {
         Stage splash = buildSplash();
         splash.show();
 
-        // Load database and caches on a background thread
+        // BUG-07: Install global handler so no thread ever dies silently
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            LOG.log(Level.SEVERE, "Uncaught exception on thread: " + thread.getName(), throwable);
+            Platform.runLater(() -> ConfirmDialog.showError("Unexpected Error",
+                    "An unexpected error occurred on thread '" + thread.getName() + "':\n"
+                    + throwable.getMessage()
+                    + "\n\nPlease restart the application if behaviour is abnormal."));
+        });
+
+        // Licensing Flow
+        Thread licenseChecker = new Thread(() -> {
+            LicenseManager.LocalLicense license = LicenseManager.getLocalLicense();
+
+            if (license == null) {
+                // No valid license -> Show Activation Screen
+                Platform.runLater(() -> {
+                    splash.close();
+                    new ActivationScreen(() -> {
+                        // On successful activation, resume normal startup
+                        Stage newSplash = buildSplash();
+                        newSplash.show();
+                        startDbLoader(newSplash, primaryStage);
+                    }).show();
+                });
+                return;
+            }
+
+            if (LicenseManager.isWithinGracePeriod(license)) {
+                // Within 4 days offline grace period -> Let app open immediately
+                startDbLoader(splash, primaryStage);
+                
+                // Silent background verification to refresh timestamp or catch revocations
+                verifyLicenseSilently(license, true, splash, primaryStage);
+            } else {
+                // Outside grace period -> Force online check
+                Platform.runLater(() -> {
+                    Label subLbl = (Label) splash.getScene().getRoot().getChildrenUnmodifiable().get(2);
+                    subLbl.setText("Verifying License Online (Grace Period Expired)...");
+                });
+
+                LicenseClient.VerificationResult result = LicenseClient.verifyLicense(license.productKey);
+                if (result.status == LicenseClient.LicenseStatus.VALID) {
+                    LicenseManager.saveLocalLicense(license.productKey);
+                    startDbLoader(splash, primaryStage);
+                } else if (result.status == LicenseClient.LicenseStatus.NETWORK_ERROR) {
+                    Platform.runLater(() -> {
+                        splash.close();
+                        ConfirmDialog.showError("Activation Required", 
+                            "It has been over 4 days since the last license check.\n" +
+                            "Please connect to the internet to verify your license.");
+                        Platform.exit();
+                    });
+                } else {
+                    // Revoked or bound to other PC
+                    LicenseManager.clearLocalLicense();
+                    requireActivation(primaryStage, result.message);
+                }
+            }
+        }, "license-checker");
+        
+        licenseChecker.setDaemon(true);
+        licenseChecker.start();
+    }
+
+    private void verifyLicenseSilently(LicenseManager.LocalLicense currentLicense, boolean isStartup, Stage splash, Stage primaryStage) {
+        Thread t = new Thread(() -> {
+            LicenseClient.VerificationResult result = LicenseClient.verifyLicense(currentLicense.productKey);
+            
+            if (result.status == LicenseClient.LicenseStatus.VALID) {
+                LicenseManager.saveLocalLicense(currentLicense.productKey);
+                LOG.info("Background license check passed. Timestamp refreshed.");
+            } else if (result.status == LicenseClient.LicenseStatus.REVOKED || result.status == LicenseClient.LicenseStatus.BOUND_TO_OTHER_PC) {
+                LicenseManager.clearLocalLicense();
+                requireActivation(primaryStage, "This product key has been revoked or bound to another PC.");
+            } else if (result.status == LicenseClient.LicenseStatus.NETWORK_ERROR) {
+                if (isStartup) {
+                    int hoursRemaining = LicenseManager.getRemainingGracePeriodHours(currentLicense);
+                    Platform.runLater(() -> {
+                        ConfirmDialog.showError("License Verification Failed", 
+                            "The PC is not connected to the internet.\n\n" +
+                            "You can use the software offline for " + hoursRemaining + " more hours before re-verification is strictly required.");
+                    });
+                }
+            }
+        }, "startup-license-checker");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void requireActivation(Stage primaryStage, String reason) {
+        Platform.runLater(() -> {
+            // Close all currently open windows (including splash or MainWindow)
+            List<Window> openWindows = new ArrayList<>(Window.getWindows());
+            for (Window w : openWindows) {
+                if (w instanceof Stage) {
+                    ((Stage) w).close();
+                }
+            }
+
+            if (reason != null && !reason.isEmpty()) {
+                ConfirmDialog.showError("License Revoked", reason);
+            }
+
+            new ActivationScreen(() -> {
+                // On successful activation, resume normal startup
+                Stage newSplash = buildSplash();
+                newSplash.show();
+                startDbLoader(newSplash, primaryStage);
+            }).show();
+        });
+    }
+
+    private void startDbLoader(Stage splash, Stage primaryStage) {
         Thread loader = new Thread(() -> {
             try {
                 DatabaseManager db = DatabaseManager.getInstance();

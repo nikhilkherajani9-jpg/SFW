@@ -338,36 +338,73 @@ public class StockTab extends BorderPane implements TabShortcutHandler {
         });
     }
 
+    // BUG-03 FIX: XLS scan + DB import run on background threads — FXAT never blocked
     private void importLegacyData() {
         javafx.stage.DirectoryChooser chooser = new javafx.stage.DirectoryChooser();
         chooser.setTitle("Select Folder with Legacy .xls files");
         java.io.File dir = chooser.showDialog(this.getScene().getWindow());
         if (dir == null) return;
 
-        com.sfw.wholesale.service.LegacyImportService importSvc = new com.sfw.wholesale.service.LegacyImportService();
-        java.util.List<com.sfw.wholesale.service.LegacyImportService.ParsedLegacyData> parsedData = importSvc.scanFiles(dir);
-        
-        if (parsedData.isEmpty()) {
-            com.sfw.wholesale.ui.component.ConfirmDialog.showInfo("Import Completed", "No valid files found with balance >= 1.");
-            return;
-        }
+        com.sfw.wholesale.service.LegacyImportService importSvc =
+                new com.sfw.wholesale.service.LegacyImportService();
 
-        java.util.List<com.sfw.wholesale.service.LegacyImportService.ParsedLegacyData> invalid = importSvc.getInvalidLocations(parsedData);
-        if (!invalid.isEmpty()) {
-            com.sfw.wholesale.ui.component.LocationMappingDialog mapDialog = new com.sfw.wholesale.ui.component.LocationMappingDialog(invalid);
-            if (!mapDialog.showAndAwaitProceed()) {
-                return; // User cancelled
+        // Step 1: scan files on background thread (Apache POI is CPU-intensive)
+        javafx.concurrent.Task<java.util.List<com.sfw.wholesale.service.LegacyImportService.ParsedLegacyData>> scanTask =
+                new javafx.concurrent.Task<>() {
+            @Override
+            protected java.util.List<com.sfw.wholesale.service.LegacyImportService.ParsedLegacyData> call() throws Exception {
+                return importSvc.scanFiles(dir);
             }
-        }
+        };
 
-        try {
-            importSvc.importData(parsedData, stockSvc, db);
-            cache.refreshStock(db.getConnection());
-            refreshDisplay();
-            com.sfw.wholesale.ui.component.ConfirmDialog.showInfo("Import Success", "Successfully imported " + parsedData.size() + " stock items!");
-        } catch (Exception ex) {
-            com.sfw.wholesale.ui.component.ConfirmDialog.showError("Import Failed", "Error importing data: " + ex.getMessage());
-        }
+        scanTask.setOnSucceeded(e -> {
+            // Step 2: back on FXAT — check results and show any dialog
+            java.util.List<com.sfw.wholesale.service.LegacyImportService.ParsedLegacyData> parsedData =
+                    scanTask.getValue();
+            if (parsedData.isEmpty()) {
+                com.sfw.wholesale.ui.component.ConfirmDialog.showInfo(
+                        "Import Completed", "No valid files found with balance >= 1.");
+                return;
+            }
+            java.util.List<com.sfw.wholesale.service.LegacyImportService.ParsedLegacyData> invalid =
+                    importSvc.getInvalidLocations(parsedData);
+            if (!invalid.isEmpty()) {
+                com.sfw.wholesale.ui.component.LocationMappingDialog mapDialog =
+                        new com.sfw.wholesale.ui.component.LocationMappingDialog(invalid);
+                if (!mapDialog.showAndAwaitProceed()) return;
+            }
+
+            // Step 3: run DB inserts on background thread
+            javafx.concurrent.Task<Void> importTask = new javafx.concurrent.Task<>() {
+                @Override
+                protected Void call() throws Exception {
+                    importSvc.importData(parsedData, stockSvc, db);
+                    return null;
+                }
+            };
+            importTask.setOnSucceeded(ev -> {
+                try { cache.refreshStock(db.getConnection()); } catch (Exception ex) {
+                    LOG.warning("Cache refresh failed after legacy import: " + ex.getMessage());
+                }
+                refreshDisplay();
+                com.sfw.wholesale.ui.component.ConfirmDialog.showInfo(
+                        "Import Success",
+                        "Successfully imported " + parsedData.size() + " stock items!");
+            });
+            importTask.setOnFailed(ev ->
+                com.sfw.wholesale.ui.component.ConfirmDialog.showError(
+                        "Import Failed", "Error importing data: " + importTask.getException().getMessage()));
+            Thread t2 = new Thread(importTask, "legacy-import-thread");
+            t2.setDaemon(true);
+            t2.start();
+        });
+        scanTask.setOnFailed(e ->
+            com.sfw.wholesale.ui.component.ConfirmDialog.showError(
+                    "Scan Failed", "Error scanning files: " + scanTask.getException().getMessage()));
+
+        Thread t1 = new Thread(scanTask, "legacy-scan-thread");
+        t1.setDaemon(true);
+        t1.start();
     }
 
     private void deleteSelectedStock() {
@@ -454,65 +491,76 @@ public class StockTab extends BorderPane implements TabShortcutHandler {
                 "-fx-background-radius: 6; -fx-cursor: hand;");
     }
 
-    // ── Ledger Viewer ─────────────────────────────────────────────────────────
-    
+    // BUG-04 FIX: DB read runs on background thread — FXAT never blocked by ledger query
     private void openLedgerViewer(String product, String location) {
         javafx.stage.Stage stage = new javafx.stage.Stage();
         stage.initModality(javafx.stage.Modality.APPLICATION_MODAL);
         stage.setTitle("Stock Ledger - " + product + " (" + location + ")");
-        
+
         TableView<com.sfw.wholesale.model.LedgerEntry> ledgerTable = new TableView<>();
         ledgerTable.setEditable(false);
         ledgerTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         ledgerTable.getStyleClass().add("stock-table");
-        
+
         TableColumn<com.sfw.wholesale.model.LedgerEntry, String> colDate = new TableColumn<>("Date");
         colDate.setCellValueFactory(c -> new javafx.beans.property.SimpleStringProperty(c.getValue().getTransactionDate().toString()));
-        
+
         TableColumn<com.sfw.wholesale.model.LedgerEntry, Number> colInward = new TableColumn<>("Inward");
         colInward.setCellValueFactory(new javafx.scene.control.cell.PropertyValueFactory<>("inwardCartons"));
         colInward.setStyle("-fx-alignment: CENTER-RIGHT; -fx-text-fill: green; -fx-font-weight: bold;");
-        
+
         TableColumn<com.sfw.wholesale.model.LedgerEntry, Number> colOutward = new TableColumn<>("Outward");
         colOutward.setCellValueFactory(new javafx.scene.control.cell.PropertyValueFactory<>("outwardCartons"));
         colOutward.setStyle("-fx-alignment: CENTER-RIGHT; -fx-text-fill: red; -fx-font-weight: bold;");
-        
+
         TableColumn<com.sfw.wholesale.model.LedgerEntry, Number> colBalance = new TableColumn<>("Balance");
         colBalance.setCellValueFactory(new javafx.scene.control.cell.PropertyValueFactory<>("balanceCartons"));
         colBalance.setStyle("-fx-alignment: CENTER-RIGHT; -fx-font-weight: bold; -fx-text-fill: #1e88e5;");
-        
+
         TableColumn<com.sfw.wholesale.model.LedgerEntry, Number> colPpc = new TableColumn<>("Prs/Ctn");
         colPpc.setCellValueFactory(new javafx.scene.control.cell.PropertyValueFactory<>("pairsPerCarton"));
         colPpc.setStyle("-fx-alignment: CENTER-RIGHT;");
-        
+
         TableColumn<com.sfw.wholesale.model.LedgerEntry, String> colSource = new TableColumn<>("LR Source");
         colSource.setCellValueFactory(new javafx.scene.control.cell.PropertyValueFactory<>("lrSource"));
-        
+
         ledgerTable.getColumns().setAll(Arrays.asList(colDate, colInward, colOutward, colBalance, colPpc, colSource));
-        
-        // Fetch data
-        try {
-            db.inTransaction(conn -> {
-                List<com.sfw.wholesale.model.LedgerEntry> entries = stockSvc.getLedgerEntries(conn, product, location);
-                ledgerTable.setItems(FXCollections.observableArrayList(entries));
-            });
-        } catch (Exception e) {
-            LOG.log(java.util.logging.Level.SEVERE, "Failed to load ledger", e);
-            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR);
-            alert.setTitle("Error");
-            alert.setHeaderText(null);
-            alert.setContentText("Could not load ledger: " + e.getMessage());
-            alert.showAndWait();
-        }
-        
+
+        // Show a spinner while loading — data arrives asynchronously
+        javafx.scene.control.ProgressIndicator spinner = new javafx.scene.control.ProgressIndicator();
+        spinner.setMaxSize(60, 60);
+        ledgerTable.setPlaceholder(spinner);
+
         VBox vbox = new VBox(10, ledgerTable);
         vbox.setPadding(new Insets(20));
         VBox.setVgrow(ledgerTable, Priority.ALWAYS);
         vbox.getStyleClass().add("pane-bg");
-        
+
         javafx.scene.Scene scene = new javafx.scene.Scene(vbox, 800, 600);
         scene.getStylesheets().add(getClass().getResource("/css/app.css").toExternalForm());
         stage.setScene(scene);
-        stage.show();
+        stage.show(); // show immediately — data fills in when the task completes
+
+        // Load ledger entries on a background thread using a dedicated read connection
+        javafx.concurrent.Task<java.util.List<com.sfw.wholesale.model.LedgerEntry>> task =
+                new javafx.concurrent.Task<>() {
+            @Override
+            protected java.util.List<com.sfw.wholesale.model.LedgerEntry> call() throws Exception {
+                // BUG-04+06: use openReadConnection() — no sharing with the FXAT write connection
+                try (java.sql.Connection conn = db.openReadConnection()) {
+                    return stockSvc.getLedgerEntries(conn, product, location);
+                }
+            }
+        };
+        task.setOnSucceeded(e ->
+            ledgerTable.setItems(FXCollections.observableArrayList(task.getValue())));
+        task.setOnFailed(e -> {
+            LOG.log(java.util.logging.Level.SEVERE, "Failed to load ledger", task.getException());
+            ledgerTable.setPlaceholder(
+                new Label("Could not load ledger: " + task.getException().getMessage()));
+        });
+        Thread t = new Thread(task, "ledger-load-thread");
+        t.setDaemon(true);
+        t.start();
     }
 }

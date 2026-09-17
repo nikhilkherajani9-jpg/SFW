@@ -35,31 +35,36 @@ public class ExportImportService {
      * @param outputDir  directory chosen by user via DirectoryChooser
      * @return  the created folder path (shown to user after export)
      */
+    // BUG-15 FIX: export opens its own dedicated read connection so it never
+    // shares the FXAT write connection (especially important after BUG-01 made
+    // export run on a background thread).
     public Path export(Path outputDir) throws Exception {
         String folderName = "SFW_Export_" + LocalDateTime.now().format(FNAME_FMT);
         Path folder = outputDir.resolve(folderName);
         Files.createDirectories(folder);
 
-        exportLrEntries(folder);
-        exportLrItems(folder);
-        exportStock(folder);
-        exportGdTransfers(folder);
+        try (Connection conn = db.openReadConnection()) {
+            exportLrEntries(conn, folder);
+            exportLrItems(conn, folder);
+            exportStock(conn, folder);
+            exportGdTransfers(conn, folder);
+        }
 
         LOG.info("Export complete: " + folder.toAbsolutePath());
         return folder;
     }
 
-    private void exportLrEntries(Path folder) throws Exception {
+    private void exportLrEntries(Connection conn, Path folder) throws Exception {
         String[] headers = {"LR Number","Received Date","Transport Company"};
         String sql = """
             SELECT lr_number, lr_date, transport_company
             FROM lr_entries WHERE lr_number != 'MANUAL-ADJ'
             ORDER BY lr_date DESC
             """;
-        writeCsv(folder.resolve("lr_entries.csv"), headers, sql);
+        writeCsv(conn, folder.resolve("lr_entries.csv"), headers, sql);
     }
 
-    private void exportLrItems(Path folder) throws Exception {
+    private void exportLrItems(Connection conn, Path folder) throws Exception {
         String[] headers = {"LR Number","Line No","Product Name",
                 "Cartons","Pairs Per Carton","Location"};
         String sql = """
@@ -68,10 +73,10 @@ public class ExportImportService {
             FROM lr_items i JOIN lr_entries e ON e.id = i.lr_id
             ORDER BY e.lr_date DESC, e.id, i.line_no
             """;
-        writeCsv(folder.resolve("lr_items.csv"), headers, sql);
+        writeCsv(conn, folder.resolve("lr_items.csv"), headers, sql);
     }
 
-    private void exportStock(Path folder) throws Exception {
+    private void exportStock(Connection conn, Path folder) throws Exception {
         String[] headers = {"Product Name","Location","Cartons",
                 "Pairs Per Carton","Total Pairs","LR Source","Receive Date"};
         String sql = """
@@ -79,10 +84,10 @@ public class ExportImportService {
                    (cartons * pairs_per_carton) AS total_pairs, lr_source, receive_date
             FROM stock ORDER BY product_name, location, receive_date
             """;
-        writeCsv(folder.resolve("stock.csv"), headers, sql);
+        writeCsv(conn, folder.resolve("stock.csv"), headers, sql);
     }
 
-    private void exportGdTransfers(Path folder) throws Exception {
+    private void exportGdTransfers(Connection conn, Path folder) throws Exception {
         String[] headers = {"Date","Product Name","From Location",
                 "To Location","Qty Cartons","Pairs","Done"};
         String sql = """
@@ -91,16 +96,16 @@ public class ExportImportService {
                    CASE done WHEN 1 THEN 'Yes' ELSE 'No' END
             FROM gd_transfers ORDER BY transfer_date DESC
             """;
-        writeCsv(folder.resolve("gd_transfers.csv"), headers, sql);
+        writeCsv(conn, folder.resolve("gd_transfers.csv"), headers, sql);
     }
 
 
 
-    /** Generic CSV writer for any SQL query. Handles NULL values as empty strings. */
-    private void writeCsv(Path file, String[] headers, String sql) throws Exception {
+    /** Generic CSV writer for any SQL query. Passes the caller's connection. */
+    private void writeCsv(Connection conn, Path file, String[] headers, String sql) throws Exception {
         try (BufferedWriter bw = Files.newBufferedWriter(file, StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-             Statement st = db.getConnection().createStatement();
+             Statement st = conn.createStatement();   // uses caller's dedicated read conn
              ResultSet rs = st.executeQuery(sql)) {
 
             // BOM for Excel UTF-8 compatibility

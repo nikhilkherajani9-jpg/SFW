@@ -49,7 +49,6 @@ public class GdTransferTab extends BorderPane implements TabShortcutHandler {
 
     // Filter state
     private TextField searchField;
-    private DatePicker fromFilter, toFilter;
     /** Two-step Enter on Qty: first Enter saves+stays, second Enter creates new row. Tracks the row index of the last Qty commit. */
     private int lastEnterRowIdx = -1;
 
@@ -81,7 +80,9 @@ public class GdTransferTab extends BorderPane implements TabShortcutHandler {
         VBox bar = new VBox(12);
         bar.setPadding(new Insets(0, 0, 16, 0));
 
-        Label title = new Label("GD Transfers");
+        // Title row: "GD Transfers — Today: dd-MM-yyyy"
+        String todayStr = LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"));
+        Label title = new Label("GD Transfers  —  Today: " + todayStr);
         title.getStyleClass().add("tab-section-title");
 
         Button addBtn = new Button("+ New Transfer");
@@ -93,18 +94,11 @@ public class GdTransferTab extends BorderPane implements TabShortcutHandler {
         deleteBtn.getStyleClass().addAll("action-btn", "btn-danger");
         deleteBtn.setOnAction(e -> deleteSelected());
 
-        fromFilter = styledDatePicker();
-        toFilter = styledDatePicker();
-        fromFilter.setPromptText("From date");
-        toFilter.setPromptText("To date");
-        fromFilter.valueProperty().addListener((obs, o, n) -> refreshDisplay());
-        toFilter.valueProperty().addListener((obs, o, n) -> refreshDisplay());
-
-        Label hint = new Label("Keyboard: Tab=next cell  Enter=save row  Ctrl+T=New Transfer  Ctrl+S=Save All");
+        Label hint = new Label("Keyboard: Tab=next cell  Enter=save row  Ctrl+T=New Transfer  Ctrl+S=Save All  |  Older transfers → \"Previous Transfers\"");
         hint.getStyleClass().add("hint-label");
 
         searchField = new TextField();
-        searchField.setPromptText("Search product name...");
+        searchField.setPromptText("Search today's product...");
         searchField.getStyleClass().add("styled-text-field");
         searchField.setPrefWidth(260);
         searchField.textProperty().addListener((obs, o, n) -> refreshDisplay());
@@ -112,17 +106,6 @@ public class GdTransferTab extends BorderPane implements TabShortcutHandler {
         HBox controls = new HBox(12, addBtn, deleteBtn,
                 new Separator(Orientation.VERTICAL),
                 searchField,
-                new Separator(Orientation.VERTICAL),
-                new Label("From:") {
-                    {
-                        getStyleClass().add("form-label");
-                    }
-                }, fromFilter,
-                new Label("To:") {
-                    {
-                        getStyleClass().add("form-label");
-                    }
-                }, toFilter,
                 new Region() {
                     {
                         HBox.setHgrow(this, Priority.ALWAYS);
@@ -175,7 +158,7 @@ public class GdTransferTab extends BorderPane implements TabShortcutHandler {
         table.setEditable(true);
         table.getStyleClass().add("stock-table");
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        table.setPlaceholder(new Label("No transfers. Click \"+ New Transfer\" to add one."));
+        table.setPlaceholder(new Label("No transfers today. Click \"+ New Transfer\" to add one, or open \"Previous Transfers\" to view older records."));
 
         // ── Columns ────────────────────────────────────────────────────────────
         TableColumn<GdTransfer, String> colDate = textEditCol("Date");
@@ -673,35 +656,22 @@ public class GdTransferTab extends BorderPane implements TabShortcutHandler {
     }
 
     private void refreshDisplay() {
-        LocalDate from = fromFilter != null ? fromFilter.getValue() : null;
-        LocalDate to = toFilter != null ? toFilter.getValue() : null;
+        // Main tab always shows TODAY's transfers only.
+        // All historical records are accessible via the "Previous Transfers" window.
+        final LocalDate today = LocalDate.now();
         String search = searchField != null ? searchField.getText().toLowerCase() : "";
 
         displayList.setAll(cache.getTransferList().stream()
                 .filter(t -> {
-                    if (!search.isBlank() && !t.getProductName().toLowerCase().contains(search))
-                        return false;
                     LocalDate d = t.getTransferDate();
-                    if (d == null)
-                        return true;
-                    if (from != null && d.isBefore(from))
+                    // Include unsaved (in-memory) rows that have today's date or no date yet
+                    if (d != null && !d.equals(today))
                         return false;
-                    if (to != null && d.isAfter(to))
+                    if (!search.isBlank() && !t.getProductName().toLowerCase().contains(search))
                         return false;
                     return true;
                 })
                 .sorted((a, b) -> {
-                    LocalDate da = a.getTransferDate();
-                    LocalDate db = b.getTransferDate();
-                    if (da == null && db == null) {
-                        int idA = a.getId() == 0 ? Integer.MAX_VALUE : a.getId();
-                        int idB = b.getId() == 0 ? Integer.MAX_VALUE : b.getId();
-                        return Integer.compare(idA, idB);
-                    }
-                    if (da == null) return -1;
-                    if (db == null) return 1;
-                    int cmp = da.compareTo(db);
-                    if (cmp != 0) return cmp;
                     int idA = a.getId() == 0 ? Integer.MAX_VALUE : a.getId();
                     int idB = b.getId() == 0 ? Integer.MAX_VALUE : b.getId();
                     return Integer.compare(idA, idB);
@@ -734,9 +704,5 @@ public class GdTransferTab extends BorderPane implements TabShortcutHandler {
     }
 
 
-    private DatePicker styledDatePicker() {
-        DatePicker dp = new DatePicker();
-        dp.getStyleClass().add("styled-date-picker");
-        return dp;
-    }
+
 }

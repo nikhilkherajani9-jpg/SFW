@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:encrypt/encrypt.dart' as enc;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -83,7 +84,7 @@ class FileSyncService {
             }
           }
         } catch (e) {
-          print("Error processing file sync: $e");
+          debugPrint("Error processing file sync: $e");
         }
       }
     }
@@ -116,7 +117,7 @@ class FileSyncService {
       
       await Share.shareXFiles([XFile(filePath)], text: 'SFW Sync Data');
     } catch (e) {
-      print("Error sharing sync file: $e");
+      debugPrint("Error sharing sync file: $e");
     }
   }
 }

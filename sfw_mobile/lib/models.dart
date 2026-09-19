@@ -34,6 +34,10 @@ class LrEntry {
   final int totalCartons;
   final int totalShopCartons;
 
+  // Added for UI backward compatibility
+  String get status => 'IN TRANSIT';
+  int get totalAmount => 0;
+
   LrEntry({
     required this.lrNumber,
     required this.lrDate,
@@ -100,6 +104,10 @@ class LrItem {
   final int shopCartons;
   final int ppc;
   final String location;
+
+  // Added for UI backward compatibility
+  int get amount => 0;
+  int get rate => 0;
 
   LrItem({
     required this.lrNumber,

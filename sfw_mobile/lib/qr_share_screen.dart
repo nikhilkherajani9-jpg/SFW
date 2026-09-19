@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'device_utils.dart';
 import 'qr_sync_server.dart';
 import 'qr_sync_client.dart';
+import 'theme/app_theme.dart';
+import 'widgets/mesh_background.dart';
+import 'widgets/glass_card.dart';
 
 class QrShareScreen extends StatefulWidget {
   const QrShareScreen({super.key});
@@ -12,28 +14,21 @@ class QrShareScreen extends StatefulWidget {
   State<QrShareScreen> createState() => _QrShareScreenState();
 }
 
-class _QrShareScreenState extends State<QrShareScreen> {
+class _QrShareScreenState extends State<QrShareScreen> with SingleTickerProviderStateMixin {
   bool _isSendMode = true;
   QrSyncServer? _server;
-  String _status = 'Ready';
+  String _status = 'Ready for connection';
   String _qrData = '';
-  String _deviceName = '';
-  String _deviceShortId = '';
   bool _isReceiving = false;
+  late AnimationController _pulseController;
 
   @override
   void initState() {
     super.initState();
-    _initDeviceInfo();
-  }
-
-  Future<void> _initDeviceInfo() async {
-    final name = await DeviceUtils.getDeviceName();
-    final shortId = await DeviceUtils.getDeviceShortId();
-    setState(() {
-      _deviceName = name;
-      _deviceShortId = shortId;
-    });
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..repeat();
   }
 
   void _startSendMode() async {
@@ -117,160 +112,223 @@ class _QrShareScreenState extends State<QrShareScreen> {
 
   @override
   void dispose() {
+    _pulseController.dispose();
     _server?.stopServer();
     super.dispose();
   }
 
+  Widget _buildGlassSegmentedControl() {
+    return GlassCard(
+      padding: const EdgeInsets.all(4),
+      borderRadius: 16,
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                if (!_isSendMode) {
+                  setState(() {
+                    _isSendMode = true;
+                    _status = 'Ready for connection';
+                    _qrData = '';
+                  });
+                }
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: _isSendMode ? Colors.white.withValues(alpha: 0.9) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: _isSendMode ? [
+                    BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 2))
+                  ] : [],
+                ),
+                child: Center(
+                  child: Text('Send Data', style: AppTheme.lightTheme.textTheme.labelLarge?.copyWith(
+                    color: _isSendMode ? AppTheme.primary : AppTheme.outline
+                  )),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                if (_isSendMode) {
+                  _stopSendMode();
+                  setState(() {
+                    _isSendMode = false;
+                    _status = 'Ready to scan';
+                  });
+                }
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: !_isSendMode ? Colors.white.withValues(alpha: 0.9) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: !_isSendMode ? [
+                    BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 2))
+                  ] : [],
+                ),
+                child: Center(
+                  child: Text('Receive Data', style: AppTheme.lightTheme.textTheme.labelLarge?.copyWith(
+                    color: !_isSendMode ? AppTheme.primary : AppTheme.outline
+                  )),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Phone-to-Phone Sync'),
-        centerTitle: true,
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
+    return MeshBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          title: Text('P2P Sync', style: AppTheme.lightTheme.textTheme.headlineMedium),
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(20.0),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Device Info
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
+              _buildGlassSegmentedControl(),
+              const SizedBox(height: 24),
+              
+              if (_isSendMode) ...[
+                GlassCard(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('This Device',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
+                      Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          AnimatedBuilder(
+                            animation: _pulseController,
+                            builder: (context, child) {
+                              final scale = 0.95 + 0.13 * (_pulseController.value > 0.5 ? (1 - _pulseController.value) * 2 : _pulseController.value * 2);
+                              final opacity = 0.3 + 0.5 * (_pulseController.value > 0.5 ? _pulseController.value * 2 - 1 : 1 - _pulseController.value * 2).abs();
+                              return Transform.scale(
+                                scale: scale,
+                                child: Container(
+                                  width: 80,
+                                  height: 80,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: AppTheme.primary.withValues(alpha: opacity * 0.2),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          Icon(Icons.wifi_tethering, size: 48, color: AppTheme.primary),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text('Broadcast Database', style: AppTheme.lightTheme.textTheme.headlineSmall),
                       const SizedBox(height: 8),
-                      Text('Name: $_deviceName'),
-                      Text('ID: $_deviceShortId'),
+                      Text('Other devices can scan your QR code to download your latest stock and LRs.', 
+                        textAlign: TextAlign.center,
+                        style: AppTheme.lightTheme.textTheme.bodyMedium?.copyWith(color: AppTheme.onSurfaceVariant)
+                      ),
+                      const SizedBox(height: 24),
+                      if (_qrData.isEmpty)
+                        ElevatedButton(
+                          onPressed: _startSendMode,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          child: Text('Generate QR Code', style: AppTheme.lightTheme.textTheme.labelLarge?.copyWith(color: Colors.white)),
+                        )
+                      else ...[
+                        Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              margin: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(color: AppTheme.primary.withValues(alpha: 0.1), blurRadius: 20, spreadRadius: 5)
+                                ],
+                              ),
+                              child: QrImageView(
+                                data: _qrData,
+                                version: QrVersions.auto,
+                                size: 200.0,
+                                backgroundColor: Colors.white,
+                              ),
+                            ),
+                            // Reticle Accents
+                            Positioned(top: 0, left: 0, child: _buildReticleCorner(AppTheme.primaryContainer, true, true)),
+                            Positioned(top: 0, right: 0, child: _buildReticleCorner(AppTheme.primaryContainer, true, false)),
+                            Positioned(bottom: 0, left: 0, child: _buildReticleCorner(AppTheme.primaryContainer, false, true)),
+                            Positioned(bottom: 0, right: 0, child: _buildReticleCorner(AppTheme.primaryContainer, false, false)),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                        TextButton.icon(
+                          onPressed: _stopSendMode,
+                          icon: const Icon(Icons.stop_circle_outlined, color: AppTheme.error),
+                          label: Text('Stop Broadcast', style: TextStyle(color: AppTheme.error)),
+                        )
+                      ]
                     ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 24),
-
-              // Mode Selection – add explicit text style to its labels
-              SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(
-                    value: true,
-                    label: Text('Send Data',
-                        style: TextStyle(fontSize: 14)),
-                  ),
-                  ButtonSegment(
-                    value: false,
-                    label: Text('Receive Data',
-                        style: TextStyle(fontSize: 14)),
-                  ),
-                ],
-                selected: {_isSendMode},
-                onSelectionChanged: (Set<bool> newSelection) {
-                  setState(() => _isSendMode = newSelection.first);
-                },
-              ),
-              const SizedBox(height: 24),
-
-              // Send Mode UI
-              if (_isSendMode) ...[
-                const Text('Send Data Mode',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 16),
-                const Text(
-                    'Start the server and share the QR code with the receiver:'),
-                const SizedBox(height: 16),
-                if (_qrData.isEmpty)
-                  Center(
-                    child: ElevatedButton.icon(
-                      onPressed: _startSendMode,
-                      icon: const Icon(Icons.play_arrow),
-                      label: const Text('Start Sending'),
-                      // FIX: explicit text style to avoid interpolation error
-                      style: ElevatedButton.styleFrom(
-                        textStyle: const TextStyle(fontSize: 14),
-                      ),
-                    ),
-                  )
-                else ...[
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: QrImageView(
-                        data: _qrData,
-                        version: QrVersions.auto,
-                        gapless: false,
-                        size: 300.0,
-                        backgroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Center(
-                    child: ElevatedButton.icon(
-                      onPressed: _stopSendMode,
-                      icon: const Icon(Icons.stop),
-                      label: const Text('Stop Sending'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        textStyle: const TextStyle(fontSize: 14),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Scan this QR with the receiver device',
-                    style: TextStyle(color: Colors.grey[600]),
-                  ),
-                ],
               ] else ...[
-                // Receive Mode UI
-                const Text('Receive Data Mode',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 16),
-                const Text('Scan the QR code displayed on the sender device:'),
-                const SizedBox(height: 24),
-                Center(
-                  child: ElevatedButton.icon(
-                    onPressed: _isReceiving ? null : _startReceiveMode,
-                    icon: const Icon(Icons.qr_code_scanner),
-                    label: const Text('Scan QR to Receive Data'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 32, vertical: 16),
-                      textStyle: const TextStyle(fontSize: 16),
-                    ),
+                GlassCard(
+                  child: Column(
+                    children: [
+                      Icon(Icons.qr_code_scanner, size: 48, color: AppTheme.tertiary),
+                      const SizedBox(height: 16),
+                      Text('Receive Database', style: AppTheme.lightTheme.textTheme.headlineSmall),
+                      const SizedBox(height: 8),
+                      Text('Scan a QR code from another device to overwrite your local data with their database.', 
+                        textAlign: TextAlign.center,
+                        style: AppTheme.lightTheme.textTheme.bodyMedium?.copyWith(color: AppTheme.onSurfaceVariant)
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: _isReceiving ? null : _startReceiveMode,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.tertiary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        child: _isReceiving
+                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : Text('Open Scanner', style: AppTheme.lightTheme.textTheme.labelLarge?.copyWith(color: Colors.white)),
+                      ),
+                    ],
                   ),
                 ),
-                if (_isReceiving)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 16),
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
               ],
 
               const SizedBox(height: 24),
-              // Status
-              Card(
-                color: Colors.blue.shade50,
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.info, color: Colors.blue),
-                      const SizedBox(width: 12),
-                      Expanded(
-                          child: Text(_status,
-                              style: const TextStyle(fontSize: 14))),
-                    ],
-                  ),
+              GlassCard(
+                isSubCard: true,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: AppTheme.primary, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(_status, style: AppTheme.lightTheme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -279,9 +337,29 @@ class _QrShareScreenState extends State<QrShareScreen> {
       ),
     );
   }
+
+  Widget _buildReticleCorner(Color color, bool isTop, bool isLeft) {
+    return Container(
+      width: 20,
+      height: 20,
+      decoration: BoxDecoration(
+        border: Border(
+          top: isTop ? BorderSide(color: color, width: 3) : BorderSide.none,
+          bottom: !isTop ? BorderSide(color: color, width: 3) : BorderSide.none,
+          left: isLeft ? BorderSide(color: color, width: 3) : BorderSide.none,
+          right: !isLeft ? BorderSide(color: color, width: 3) : BorderSide.none,
+        ),
+        borderRadius: BorderRadius.only(
+          topLeft: isTop && isLeft ? const Radius.circular(8) : Radius.zero,
+          topRight: isTop && !isLeft ? const Radius.circular(8) : Radius.zero,
+          bottomLeft: !isTop && isLeft ? const Radius.circular(8) : Radius.zero,
+          bottomRight: !isTop && !isLeft ? const Radius.circular(8) : Radius.zero,
+        ),
+      ),
+    );
+  }
 }
 
-// QR scanner screen (unchanged, but we keep it)
 class QrScannerForReceive extends StatefulWidget {
   const QrScannerForReceive({super.key});
 
@@ -295,25 +373,56 @@ class _QrScannerForReceiveState extends State<QrScannerForReceive> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Scan Sender QR'),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () => Navigator.pop(context, null),
-        ),
-      ),
-      body: MobileScanner(
-        onDetect: (capture) {
-          if (_scanned) return;
-          final barcodes = capture.barcodes;
-          if (barcodes.isNotEmpty && barcodes.first.rawValue != null) {
-            final data = barcodes.first.rawValue!;
-            if (data.startsWith('phone2phone://')) {
-              _scanned = true;
-              Navigator.pop(context, data);
-            }
-          }
-        },
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          MobileScanner(
+            onDetect: (capture) {
+              if (_scanned) return;
+              final barcodes = capture.barcodes;
+              if (barcodes.isNotEmpty && barcodes.first.rawValue != null) {
+                final data = barcodes.first.rawValue!;
+                if (data.startsWith('phone2phone://')) {
+                  _scanned = true;
+                  Navigator.pop(context, data);
+                }
+              }
+            },
+          ),
+          Center(
+            child: Container(
+              width: 250,
+              height: 250,
+              decoration: BoxDecoration(
+                border: Border.all(color: AppTheme.tertiaryContainer, width: 2),
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(color: AppTheme.tertiaryContainer.withValues(alpha: 0.5), blurRadius: 20, spreadRadius: 5),
+                ],
+              ),
+            ),
+          ),
+          Positioned(
+            top: 50,
+            left: 20,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 30),
+              onPressed: () => Navigator.pop(context, null),
+            ),
+          ),
+          Positioned(
+            bottom: 50,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: GlassCard(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                borderRadius: 30,
+                child: Text('Align QR code within reticle', style: AppTheme.lightTheme.textTheme.labelLarge),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

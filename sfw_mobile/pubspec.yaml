@@ -46,6 +46,7 @@ dependencies:
   encrypt: ^5.0.3
   permission_handler: ^11.3.1
   share_plus: ^10.0.0
+  google_fonts: ^6.2.1
 
 dev_dependencies:
   flutter_test:

@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:path_provider/path_provider.dart';
 import 'database_helper.dart';
 import 'device_utils.dart';
 
